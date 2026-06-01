@@ -1,8 +1,10 @@
 {
   "name": "@agon/kern-engines",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "Engine substrates that drive third-party CLI/API agents on behalf of agon. Polyglot: TS twin in this directory, Python twin in .py files side-by-side.",
   "exports": {
     ".": {
@@ -30,6 +32,11 @@
   "scripts": {
     "build": "tsup && tsc -b tsconfig.json --force",
     "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.4.0",
+    "typescript": "^5.7.0"
   },
   "optionalDependencies": {}
 }
