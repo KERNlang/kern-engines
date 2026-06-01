@@ -1,4 +1,4 @@
-// @agon/kern-engines — engine substrates for driving CLI/API agents.
+// @kernlang/agon-engines — engine substrates for driving CLI/API agents.
 //
 // Polyglot package: this barrel exposes TS twins; Python twins live in the
 // same .py files side-by-side. Public surfaces match per engine but the

@@ -12,8 +12,8 @@
 // aspirational — KERN does not yet support the `extern-pypi:` scheme.
 
 // ── working today: import the TS twin ────────────────────────────────────
-import from="@agon/kern-engines/cli/claude.js" names="ClaudeCliSession,ClaudeSessionError" types=true
-import from="@agon/kern-engines/cli/claude.js" names="ClaudeCliSession" runtime=true
+import from="@kernlang/agon-engines/cli/claude.js" names="ClaudeCliSession,ClaudeSessionError" types=true
+import from="@kernlang/agon-engines/cli/claude.js" names="ClaudeCliSession" runtime=true
 
 // KERN-GAP: imports — no `extern-pypi:` scheme. We want to write
 //     import from="extern-pypi:kern_engines.cli.claude" names="ClaudeCliSession"

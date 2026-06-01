@@ -93,7 +93,7 @@ with ClaudeCliSession() as cs:
 ### TypeScript
 
 ```ts
-import { ClaudeCliSession } from '@agon/kern-engines/cli/claude';
+import { ClaudeCliSession } from '@kernlang/agon-engines/cli/claude';
 
 const cs = await ClaudeCliSession.spawn({ cwd: '/path/to/workspace' });
 try {

@@ -18,7 +18,7 @@ import { existsSync } from 'node:fs';
 // by walking UP from this module's on-disk location. We resolve from
 // import.meta.url — NOT cwd, NOT a global pip install — so
 // `python3 -m kern_engines.cli.daemon` resolves identically in this repo, in a
-// git worktree, and when @agon/kern-engines is npm-installed into node_modules,
+// git worktree, and when @kernlang/agon-engines is npm-installed into node_modules,
 // for ANY dispatch cwd. The only runtime prerequisite is python3 on PATH (the
 // daemon is stdlib-only). We WALK rather than use a fixed relative path because
 // the bundler (tsup) may emit the running code into dist/chunk-*.js (one level

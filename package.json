@@ -1,5 +1,5 @@
 {
-  "name": "@agon/kern-engines",
+  "name": "@kernlang/agon-engines",
   "version": "0.1.0",
   "type": "module",
   "publishConfig": {
