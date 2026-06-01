@@ -6,6 +6,25 @@
     "access": "public"
   },
   "description": "Engine substrates that drive third-party CLI/API agents on behalf of agon. Polyglot: TS twin in this directory, Python twin in .py files side-by-side.",
+  "keywords": [
+    "agon",
+    "kernlang",
+    "ai",
+    "cli",
+    "engine",
+    "claude",
+    "pty"
+  ],
+  "homepage": "https://github.com/KERNlang/kern-engines#readme",
+  "bugs": {
+    "url": "https://github.com/KERNlang/kern-engines/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KERNlang/kern-engines.git"
+  },
+  "author": "KERNlang",
+  "license": "MIT",
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -27,7 +46,9 @@
   "files": [
     "dist",
     "py/kern_engines/**/*.py",
-    "pyproject.toml"
+    "pyproject.toml",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsup && tsc -b tsconfig.json --force",
