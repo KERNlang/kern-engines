@@ -1,0 +1,6 @@
+[K⏺ - src/api/users.ts: divide() does not guard b===0  ✶ Pondering… (1s)
+[K⏺ - src/api/users.ts: divide() does not guard b===0  ✽ Pondering… (2s)
+[K⏺ - src/api/users.ts: divide() does not guard b===0  ✷ Pondering… (3s)
+[K⏺ - src/api/users.ts: divide() does not guard b===0  ✻ Pondering… (4s)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✻ Worked for 4s  ❯
