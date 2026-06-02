@@ -1,0 +1,1 @@
+Off-by-one in loop condition causes reading past the end

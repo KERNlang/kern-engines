@@ -336,22 +336,53 @@ def _dedupe_filter(text: str, chrome: re.Pattern) -> str:
     return "\n".join(kept).strip()
 
 
-def extract_response(post_text: str, cfg: EngineConfig) -> str:
-    """Pull the assistant's reply out of the post-send transcript.
+def _settled_frame(text: str, cfg: EngineConfig) -> str:
+    """THE single extraction path — turn a settled transcript into the answer.
 
-    Strategy: find the LAST occurrence of the response marker (e.g. ⏺
-    for Claude), take everything after it, then filter chrome lines +
-    dedupe. When no marker is present (rare — usually means claude
-    bailed before printing a response), filter the entire post-send
-    transcript instead.
+    This is the read half of the one watchdog gate: once the stream has gone
+    idle past the watchdog threshold (see ``_watchdog_settled``), the caller
+    hands the post-send transcript here and gets back the assistant's reply.
+    Every extraction in the module — ``ask``, ``ask_stream`` (snapshots AND
+    final flush), the empty-result diagnostics — flows through this one
+    function, so the "settle, then take the region" rule lives in exactly one
+    place instead of being re-derived at each call site.
+
+    The region is taken in three stages, each load-bearing and unchanged in
+    meaning from the original scattered rules:
+
+      1. ISOLATE the marker region. Find the LAST response marker (⏺ for
+         claude); the answer is everything after it. Earlier markers are
+         intros whose content we don't want. When no marker is present (rare
+         — usually claude bailed before printing) we fall back to the whole
+         transcript.
+      2. CROP to the transcript (``_crop_to_transcript``): drop everything
+         from the first full-width ``─────`` divider onward — that boundary
+         separates the answer from the bottom-of-screen chrome (spinner,
+         status line, input bar).
+      3. FILTER + dedupe lines (``_dedupe_filter``): cut each line at the
+         live spinner glyph / input-bar arrow merged onto it, drop box rules
+         and chrome lines, collapse TUI redraw duplicates.
     """
-    text = re.sub(r"\r\n?", "\n", post_text)
     chrome = re.compile(cfg.chrome_regex)
     if cfg.response_marker and cfg.response_marker in text:
         idx = text.rindex(cfg.response_marker)
-        tail = text[idx + len(cfg.response_marker):]
-        return _dedupe_filter(_crop_to_transcript(tail), chrome)
-    return _dedupe_filter(_crop_to_transcript(text), chrome)
+        region = text[idx + len(cfg.response_marker):]
+    else:
+        region = text
+    return _dedupe_filter(_crop_to_transcript(region), chrome)
+
+
+def extract_response(post_text: str, cfg: EngineConfig) -> str:
+    """Pull the assistant's reply out of the post-send transcript.
+
+    Public entry point (stable API). Normalises CR/LF then delegates to the
+    single extraction path ``_settled_frame`` — see its docstring for the
+    marker-isolate → divider-crop → chrome-filter pipeline. Kept as a thin
+    wrapper so callers (and the regression replay suite) keep importing the
+    same name while the actual region-taking lives in one consolidated place.
+    """
+    text = re.sub(r"\r\n?", "\n", post_text)
+    return _settled_frame(text, cfg)
 
 
 def _crop_to_transcript(tail: str) -> str:
@@ -371,6 +402,76 @@ def _crop_to_transcript(tail: str) -> str:
     """
     div = re.search(r"─{8,}", tail)
     return tail[: div.start()] if div else tail
+
+
+# Anchors that mark the start of post-response TUI chrome (input bar / status).
+# Cutting the marker tail here before the structural completeness check keeps
+# the bottom-of-screen redraw from confusing the brace/bracket balance count.
+_DONE_TAIL_ANCHORS = ("\n❯", "Cooked for", "Churned for")
+
+
+def _looks_incomplete(tail: str) -> bool:
+    """True while the post-marker tail looks like claude is still mid-emit.
+
+    Cheap structural check: count unmatched braces/brackets in the tail.
+    Strings can throw this off, but for the review/swarm JSON-block use case
+    the dominant pattern is ``{"findings":[...]}`` so this is good enough.
+    Also treats a cliffhanger ending (":", ",", an open bracket) as incomplete
+    — claude is about to emit more.
+    """
+    opens = tail.count("{") + tail.count("[")
+    closes = tail.count("}") + tail.count("]")
+    if opens > closes:
+        return True
+    stripped_tail = tail.rstrip()
+    if stripped_tail.endswith((":", ",", "{", "[", "(")):
+        return True
+    return False
+
+
+def _watchdog_settled(
+    stripped: str, idle_ms: float, cfg: EngineConfig, response_idle_ms: int
+) -> bool:
+    """THE single watchdog gate — has the stream settled enough to extract?
+
+    This formalises the one timing bet the whole scraper rests on: "don't emit
+    while the TUI is still animating / streaming; wait until it's gone idle
+    past the watchdog threshold, THEN take the settled region." Both ``ask``
+    and ``ask_stream`` route their done-detection through here so the bet lives
+    in exactly one place instead of being half-implemented at each call site.
+
+    The threshold is ESCALATED, not flat, because raw idle alone misfires:
+
+      - No marker yet → claude is likely paused mid-tool-loop (it pauses
+        several seconds between a Read result and the next action) with no ⏺
+        printed. Firing here would extract a chrome scrap. Hold the bar much
+        higher (4× ``response_idle_ms``) so we only bail when claude has
+        visibly stopped working.
+      - Marker present but the tail looks mid-stream (unbalanced JSON braces or
+        a cliffhanger ":" / ",") → claude streams large replies in bursts and
+        can pause 8+ s between segments. Hold at 3× until the structure looks
+        balanced, so we don't snapshot a half-emitted JSON block.
+      - Marker present and the tail looks complete → the normal idle bar
+        settles us promptly.
+    """
+    if cfg.response_marker:
+        marker_idx = stripped.rfind(cfg.response_marker)
+        if marker_idx < 0:
+            # Marker not emitted yet — hold the bar high.
+            return idle_ms > response_idle_ms * 4
+        # Isolate the tail past the LAST marker (earlier markers are intros
+        # whose closing braces don't affect the final structure), then drop
+        # trailing TUI status so it can't skew the open/close count.
+        tail = stripped[marker_idx + len(cfg.response_marker):]
+        for anchor in _DONE_TAIL_ANCHORS:
+            cut = tail.find(anchor)
+            if cut > 0:
+                tail = tail[:cut]
+                break
+        if _looks_incomplete(tail):
+            return idle_ms > response_idle_ms * 3
+        return idle_ms > response_idle_ms
+    return idle_ms > response_idle_ms
 
 
 # ── session ───────────────────────────────────────────────────────────────
@@ -647,68 +748,19 @@ class PtyTuiSession:
                 self._drain_until_idle(idle_ms=200, max_ms=2000)
             self._write_all(b"\r")
 
-            # `response_marker` MUST appear before we declare done: claude
-            # in tool-use loops pauses for several seconds between Read
-            # results and the next action, and the bare `idle_ms > 4s`
-            # rule used to fire mid-loop with no ⏺ marker emitted yet —
-            # extract_response then fell back to dedup-non-chrome-lines
-            # and returned a chrome scrap (e.g. `⎿ src/foo.ts ✳ Wibbling…`).
-            # If the marker hasn't shown up yet, hold the idle bar much
-            # higher (4× response_idle_ms) so we only bail when claude
-            # has visibly stopped working.
-            #
-            # ALSO: with large prompts claude streams its response in
-            # bursts and can pause 8+ seconds between segments — long
-            # enough to trip the bare idle check while mid-emit of a
-            # JSON block. We detect "obviously mid-stream" via unmatched
-            # braces/brackets in the post-marker tail and hold the idle
-            # bar at 3× until the JSON looks balanced. Once closing
-            # markers appear (or there were no opening ones to begin
-            # with), normal idle settles us promptly.
-            no_marker_idle_ms = self._response_idle_ms * 4
-            mid_stream_idle_ms = self._response_idle_ms * 3
-
-            def _looks_incomplete(tail: str) -> bool:
-                # Cheap structural check: count unmatched braces/brackets
-                # in the tail. Strings can throw this off, but for the
-                # review/swarm JSON-block use case the dominant pattern is
-                # `{"findings":[...]}` so this is good enough.
-                opens = tail.count("{") + tail.count("[")
-                closes = tail.count("}") + tail.count("]")
-                if opens > closes:
-                    return True
-                # Mid-paragraph cliffhanger: ends with ":" or "," — claude
-                # is about to emit more.
-                stripped_tail = tail.rstrip()
-                if stripped_tail.endswith((":", ",", "{", "[", "(")):
-                    return True
-                return False
-
+            # Done-detection routes through the single watchdog gate
+            # (``_watchdog_settled``): "stream idle past the (escalated)
+            # watchdog threshold → the settled region is ready to extract."
+            # The escalation rationale (hold higher before the ⏺ marker shows,
+            # and while the JSON tail looks mid-stream) lives in that one
+            # helper's docstring rather than being re-derived here.
             def done(s: _PumpState) -> bool:
                 if s.bytes_seen <= 0:
                     return False
-                if cfg.response_marker:
-                    stripped = strip_ansi_bytes(bytes(self._buffer[pre_len:]))
-                    marker_idx = stripped.rfind(cfg.response_marker)
-                    if marker_idx >= 0:
-                        # Extract just the tail past the last marker for the
-                        # completeness check — earlier markers are intros
-                        # whose closing braces don't affect the final JSON.
-                        tail = stripped[marker_idx + len(cfg.response_marker):]
-                        # Drop trailing TUI status (input bar / spinner) so it
-                        # doesn't confuse the open/close count.
-                        # Cut at first occurrence of typical post-response
-                        # chrome anchors.
-                        for anchor in ("\n❯", "Cooked for", "Churned for"):
-                            cut = tail.find(anchor)
-                            if cut > 0:
-                                tail = tail[:cut]
-                                break
-                        if _looks_incomplete(tail):
-                            return s.idle_ms > mid_stream_idle_ms
-                        return s.idle_ms > self._response_idle_ms
-                    return s.idle_ms > no_marker_idle_ms
-                return s.idle_ms > self._response_idle_ms
+                stripped = strip_ansi_bytes(bytes(self._buffer[pre_len:]))
+                return _watchdog_settled(
+                    stripped, s.idle_ms, cfg, self._response_idle_ms
+                )
 
             self._pump_until(done, timeout_s=timeout, error_label="ask")
             post_bytes = bytes(self._buffer[pre_len:])
@@ -789,19 +841,19 @@ class PtyTuiSession:
             def done(s: _PumpState) -> bool:
                 nonlocal last_emitted, last_emit_at, response_seen
                 now = time.monotonic()
+                stripped = strip_ansi_bytes(bytes(self._buffer[pre_len:]))
                 # Only consider a snapshot every stream_emit_interval_s and
                 # only after we've seen *any* bytes back from the engine.
                 if now - last_emit_at >= cfg.stream_emit_interval_s and s.bytes_seen > 0:
-                    snapshot = extract_response(
-                        strip_ansi_bytes(bytes(self._buffer[pre_len:])), cfg,
-                    )
+                    snapshot = _settled_frame(stripped, cfg)
                     # Before the response marker appears we're scraping the
                     # spinner/animation area — emitting that as "progress"
-                    # is just noise. Hold off until the marker shows up.
-                    if response_marker and response_marker not in strip_ansi_bytes(
-                        bytes(self._buffer[pre_len:])
-                    ) and not response_seen:
-                        return s.idle_ms > self._response_idle_ms
+                    # is just noise. Hold off (via the shared watchdog gate)
+                    # until the marker shows up.
+                    if response_marker and response_marker not in stripped and not response_seen:
+                        return _watchdog_settled(
+                            stripped, s.idle_ms, cfg, self._response_idle_ms
+                        )
                     response_seen = True
                     if snapshot and snapshot != last_emitted:
                         # Only emit if the response strictly grew. Regressions
@@ -817,7 +869,11 @@ class PtyTuiSession:
                     last_emit_at = now
                 if s.bytes_seen <= 0:
                     return False
-                return s.idle_ms > self._response_idle_ms
+                # Done-detection routes through the same single watchdog gate
+                # ask() uses — one timing bet, one extraction path.
+                return _watchdog_settled(
+                    stripped, s.idle_ms, cfg, self._response_idle_ms
+                )
 
             # generator scratch — pump_until calls `done` repeatedly and
             # appends new chunks here; we drain after each pump tick.

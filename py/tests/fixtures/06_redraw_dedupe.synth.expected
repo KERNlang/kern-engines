@@ -1,0 +1,1 @@
+- src/api/users.ts: divide() does not guard b===0
