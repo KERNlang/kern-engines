@@ -410,22 +410,41 @@ def _crop_to_transcript(tail: str) -> str:
 _DONE_TAIL_ANCHORS = ("\n❯", "Cooked for", "Churned for")
 
 
+# A tail "looks like a JSON block" only when it contains an object/array opened
+# with a quoted key or string element (or a ```json fence) — the dominant
+# structured-reply shape (review/swarm ``{"findings":[...]}``). Plain prose and
+# code routinely carry stray braces (a regex ``\{``, ``foo({``, ``Array.from({``)
+# that are NOT mid-stream JSON; counting those as incomplete parked COMPLETED
+# replies for 3× idle (~24s in agent mode) on the streamed ``ask_stream`` path
+# (codex review of the watchdog consolidation).
+_JSON_BLOCK_HINT = re.compile(r"""[{\[]\s*["']|```\s*json""", re.IGNORECASE)
+# Strip quoted string literals before counting braces so braces INSIDE strings
+# don't skew the balance (e.g. ``{"msg": "fix { this"}`` is balanced).
+_STRING_LITERAL = re.compile(r'"(?:[^"\\]|\\.)*"' + r"|'(?:[^'\\]|\\.)*'")
+
+
 def _looks_incomplete(tail: str) -> bool:
     """True while the post-marker tail looks like claude is still mid-emit.
 
-    Cheap structural check: count unmatched braces/brackets in the tail.
-    Strings can throw this off, but for the review/swarm JSON-block use case
-    the dominant pattern is ``{"findings":[...]}`` so this is good enough.
-    Also treats a cliffhanger ending (":", ",", an open bracket) as incomplete
-    — claude is about to emit more.
+    Two deliberately conservative signals — conservative because the streamed
+    ``ask_stream`` path is sensitive to parking a reply that is actually done:
+
+      - Cliffhanger ending (":", ",", an open bracket) → claude is about to
+        emit the next segment.
+      - Unbalanced braces/brackets, but ONLY when the tail actually looks like a
+        JSON block (``_JSON_BLOCK_HINT``) and ignoring braces inside quoted
+        strings. The review/swarm pattern ``{"findings":[...]}`` is still held
+        mid-emit; ordinary prose/code with stray braces is not.
     """
-    opens = tail.count("{") + tail.count("[")
-    closes = tail.count("}") + tail.count("]")
-    if opens > closes:
-        return True
     stripped_tail = tail.rstrip()
     if stripped_tail.endswith((":", ",", "{", "[", "(")):
         return True
+    if _JSON_BLOCK_HINT.search(tail):
+        scrubbed = _STRING_LITERAL.sub("", tail)
+        opens = scrubbed.count("{") + scrubbed.count("[")
+        closes = scrubbed.count("}") + scrubbed.count("]")
+        if opens > closes:
+            return True
     return False
 
 
@@ -465,7 +484,10 @@ def _watchdog_settled(
         tail = stripped[marker_idx + len(cfg.response_marker):]
         for anchor in _DONE_TAIL_ANCHORS:
             cut = tail.find(anchor)
-            if cut > 0:
+            # >= 0, not > 0: a chrome anchor sitting at the very start of the
+            # tail (marker immediately followed by the input bar) must still be
+            # stripped, else the leftover chrome skews completeness (agy review).
+            if cut >= 0:
                 tail = tail[:cut]
                 break
         if _looks_incomplete(tail):
