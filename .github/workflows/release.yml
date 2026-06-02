@@ -1,0 +1,61 @@
+name: Release
+
+# Tag-driven publish for @kernlang/agon-engines. Push a tag vX.Y.Z whose version
+# matches package.json, and this workflow builds and publishes the package to npm
+# from the exact tagged commit.
+#
+# This package is an INDEPENDENT, shared substrate (consumed by agon, the KERN
+# site, and others) — it owns its own version and release cadence here, NOT in
+# any consumer's repo.
+#
+# Requires an NPM_TOKEN repo secret (Settings → Secrets and variables → Actions)
+# with publish rights to the @kernlang scope.
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          # Writes the registry + auth placeholder consumed by NODE_AUTH_TOKEN below.
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Gate the publish on the same checks the package builds with — never ship a
+      # red tree. tsup + tsc produce dist/, which is what gets published.
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      # A prerelease tag (v1.2.3-beta.1) must not become the default `latest`
+      # install target; publish it under the `next` dist-tag instead.
+      - name: Publish to npm
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          case "$VERSION" in
+            *-*) npm publish --tag next ;;
+            *)   npm publish ;;
+          esac
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
