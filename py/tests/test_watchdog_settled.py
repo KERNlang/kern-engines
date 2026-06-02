@@ -122,3 +122,44 @@ def test_done_tail_anchor_strips_status_before_completeness_check():
     buf = _MARKER + ' {"ok":true}\n' + "❯ ? for shortcuts"
     assert _settled(buf, _IDLE + 1) is True
     assert _settled(buf, _IDLE - 1) is False
+
+
+# -- prose/code with stray braces must NOT be parked as "mid-stream JSON" -----
+# (codex review: ask_stream routed completed replies through the structural
+# brace gate, holding finished prose/code with a literal "{" for 3x idle.)
+
+
+def test_prose_with_stray_open_brace_settles_at_1x():
+    # Completed prose/code that carries an unbalanced brace but is NOT a JSON
+    # block must settle on the normal 1x bar (these end on prose chars, so the
+    # cliffhanger signal is not in play — the discriminator is the brace gate).
+    for body in (
+        r" The regex /\{/ matches a single brace.",
+        " Call foo({ to open the options object, then read the docs.",
+    ):
+        buf = _MARKER + body
+        tail = buf[buf.index(_MARKER) + len(_MARKER):]
+        assert _looks_incomplete(tail) is False, repr(body)
+        assert _settled(buf, _IDLE + 1) is True, repr(body)
+        assert _settled(buf, _IDLE * 2) is True, repr(body)
+
+
+def test_unbalanced_braces_inside_json_strings_are_balanced():
+    # Braces living inside quoted string values must not skew the count:
+    # {"msg":"fix { this"} is structurally complete.
+    buf = _MARKER + ' {"msg":"fix { this"}'
+    tail = buf[buf.index(_MARKER) + len(_MARKER):]
+    assert _looks_incomplete(tail) is False
+    assert _settled(buf, _IDLE + 1) is True
+
+
+def test_genuine_json_block_still_held_until_3x_via_brace_gate():
+    # Regression guard: a real, structurally-unbalanced JSON block (the use case
+    # the structural hold exists for) is STILL parked until 3x idle — and via the
+    # brace gate, not the cliffhanger (tail ends on '}', a non-cliffhanger char).
+    buf = _MARKER + ' {"findings":[{"file":"a.ts"}'
+    tail = buf[buf.index(_MARKER) + len(_MARKER):]
+    assert tail.rstrip().endswith("}")  # not a cliffhanger ending
+    assert _looks_incomplete(tail) is True
+    assert _settled(buf, _IDLE) is False
+    assert _settled(buf, _IDLE * 3 + 1) is True
