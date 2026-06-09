@@ -111,11 +111,15 @@ CLAUDE = EngineConfig(
     use_bracketed_paste=True,
     input_chunk_size=512,
     input_chunk_delay_ms=4,
-    # Wide cols so the TUI doesn't wrap long single-line JSON findings across
-    # rows — TUI wrap uses cursor-position ANSI (not \n), and our ANSI strip
-    # would collapse the wrapped words together ("No check for b===0" →
-    # "Nocheckforb===0"). 500 cols fits any reasonable finding on one row.
-    cols=500,
+    # Wide cols so the TUI doesn't wrap long single-line text across rows — TUI
+    # wrap uses cursor-position ANSI (not \n), and our ANSI strip substitutes a
+    # space for each movement CSI, which on a MID-WORD wrap inserts a space /
+    # drops a char ("Cultural risk" → "Cul ura ri k"). 500 was sized for short
+    # JSON findings, but long prose answers (e.g. a multi-paragraph council/role
+    # reply) still wrap past it and corrupt. 8000 fits any realistic single
+    # logical line so the wrap (and the lossy strip) never triggers. Phase-0
+    # stopgap; the real fix is a wrap-aware/stateless-neighbor strip.
+    cols=8000,
 )
 
 
