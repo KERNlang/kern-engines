@@ -111,15 +111,20 @@ CLAUDE = EngineConfig(
     use_bracketed_paste=True,
     input_chunk_size=512,
     input_chunk_delay_ms=4,
-    # Wide cols so the TUI doesn't wrap long single-line text across rows — TUI
-    # wrap uses cursor-position ANSI (not \n), and our ANSI strip substitutes a
-    # space for each movement CSI, which on a MID-WORD wrap inserts a space /
-    # drops a char ("Cultural risk" → "Cul ura ri k"). 500 was sized for short
-    # JSON findings, but long prose answers (e.g. a multi-paragraph council/role
-    # reply) still wrap past it and corrupt. 8000 fits any realistic single
-    # logical line so the wrap (and the lossy strip) never triggers. Phase-0
-    # stopgap; the real fix is a wrap-aware/stateless-neighbor strip.
+    # The ANSI strip substitutes a SPACE for every cursor-movement CSI; on any
+    # movement that lands mid-token it inserts a space / drops a char
+    # ("Cultural risk" → "Cul ura ri k"). Movement CSIs fire on BOTH axes:
+    #   - horizontal: a long single line wrapping past `cols`
+    #   - vertical:   a long answer scrolling past `rows` (the dominant cause —
+    #     a multi-paragraph council/role reply taller than the pty scrolls, and
+    #     the scroll/repaint CSIs corrupt the scrolled content). VERIFIED: a live
+    #     council still showed mid-word loss with cols=8000/rows=40, because the
+    #     answer was tall, not wide.
+    # So size BOTH axes large enough that a realistic answer renders in one
+    # screen with no wrap and no scroll, so no movement CSI ever fires. Phase-0
+    # stopgap; the real fix is a wrap/scroll-aware (stateless-neighbor) strip.
     cols=8000,
+    rows=2000,
 )
 
 
