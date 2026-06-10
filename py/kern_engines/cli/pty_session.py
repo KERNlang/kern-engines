@@ -780,9 +780,20 @@ class PtyTuiSession:
                 if s.bytes_seen <= 0:
                     return False
                 stripped = strip_ansi_bytes(bytes(self._buffer[pre_len:]))
-                return _watchdog_settled(
+                if not _watchdog_settled(
                     stripped, s.idle_ms, cfg, self._response_idle_ms
-                )
+                ):
+                    return False
+                # Don't accept an EMPTY settle: if the settled frame extracts to
+                # nothing (no response marker / first visible text yet), claude
+                # is still warming up — keep waiting (to the hard timeout) for
+                # real content instead of returning a silent "empty response".
+                # Worst case becomes an honest timeout, not a false empty. The
+                # happy path is unaffected: once content+marker exist, extract is
+                # non-empty and we settle as before.
+                if not extract_response(stripped, cfg):
+                    return False
+                return True
 
             self._pump_until(done, timeout_s=timeout, error_label="ask")
             post_bytes = bytes(self._buffer[pre_len:])
@@ -893,9 +904,16 @@ class PtyTuiSession:
                     return False
                 # Done-detection routes through the same single watchdog gate
                 # ask() uses — one timing bet, one extraction path.
-                return _watchdog_settled(
+                if not _watchdog_settled(
                     stripped, s.idle_ms, cfg, self._response_idle_ms
-                )
+                ):
+                    return False
+                # Same empty-settle guard as ask(): a settled-but-empty frame
+                # means claude hasn't emitted real content yet — keep waiting
+                # to the hard timeout rather than finishing with an empty reply.
+                if not extract_response(stripped, cfg):
+                    return False
+                return True
 
             # generator scratch — pump_until calls `done` repeatedly and
             # appends new chunks here; we drain after each pump tick.
