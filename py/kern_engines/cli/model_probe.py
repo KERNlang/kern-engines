@@ -238,10 +238,14 @@ def parse_codex_picker(stripped: str) -> dict:
 # claude /model: numbered "Select model" selector, also single-line. Each row is
 # "N. <label> [✔] <Brand> <ver> [with 1M context] · <desc> · …". The label
 # (Default/Sonnet/Haiku) is claude-UI; the real model is the Brand+ver after it.
-# `✔` marks the active model. Typing /model first shows claude's slash-command
-# AUTOCOMPLETE menu, so anchor on the LAST "Select model". --model takes brand
-# aliases (opus/sonnet/haiku) + a [1m] suffix for the distinct 1M-context Sonnet.
-_CLAUDE_BRAND_RE = re.compile(r"\b(Opus|Sonnet|Haiku)\s+(\d+(?:\.\d+)?)")
+# `✔` marks the active model (it sits between the label and the Brand+ver, so
+# the label occurrence of the brand word never matches the Brand+ver regex).
+# Typing /model first shows claude's slash-command AUTOCOMPLETE menu, so anchor
+# on the LAST "Select model". --model takes brand aliases (opus/sonnet/haiku/
+# fable) + a [1m] suffix for the distinct 1M-context Sonnet. The brand list must
+# track new Claude families — the Fable-era picker put the ✔ on a "Fable 5" row
+# this regex didn't know, so the row (and the current marker with it) vanished.
+_CLAUDE_BRAND_RE = re.compile(r"\b(Opus|Sonnet|Haiku|Fable|Mythos)\s+(\d+(?:\.\d+)?)")
 
 
 def parse_claude_picker(stripped: str) -> dict:
